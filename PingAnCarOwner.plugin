@@ -2,6 +2,7 @@
 #!desc = 抓取平安好车主登录凭据，并按设定时间签到、领取已完成任务奖励；可选尝试完成低风险浏览类任务。首次使用必须在平安好车主 App 内手动进入签到页和任务中心。
 #!author = Codex
 #!homepage = https://github.com/XXJJz/loon-pingan-carowner
+#!icon=https://raw.githubusercontent.com/XXJJz/loon-pingan-carowner/main/assets/pingan-carowner.jpg
 #!date = 2026-08-14
 #!system = iOS
 #!loon_version = 3.2.1(733)

@@ -27,6 +27,8 @@
 https://raw.githubusercontent.com/XXJJz/loon-pingan-carowner/main/PingAnCarOwner.plugin
 ```
 
+插件图标取自 Apple App Store 当前 `6.03.1` 版平安好车主的官方应用图标，并托管在本仓库，供 Loon 的 `#!icon` 元数据加载。
+
 1. 在 Loon 的“插件”页面点击右上角 `+`，粘贴上面的订阅地址并保存。插件会自动从本仓库加载脚本，无需单独导入 JavaScript。
 2. 在 Loon 中生成并信任 MITM 证书，确认插件已启用。
 3. 打开平安好车主 App，进入“签到领积分”页面；如果当天未签到，手动签到一次。
