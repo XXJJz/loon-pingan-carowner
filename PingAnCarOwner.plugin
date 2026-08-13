@@ -18,8 +18,8 @@ replayFallback = switch,true,tag=原请求降级重放,desc=明文 Token 请求�
 captureEnable = switch,true,tag=启用凭据抓取,desc=关闭后不会更新 Cookie、Token 和原请求模板
 
 [Script]
-http-request ^https:\/\/hcz-member\.pingan\.com\.cn\/micro-api\/(?:activity-sign|activity-points-zone)\/gw\/(?:signCall|taskCall)\/(?:mainv1|toSign|taskMine|finish|reward|rewardBatch|refreshRecommend)(?:\?.*)?$ script-path=https://raw.githubusercontent.com/XXJJz/loon-pingan-carowner/main/pingan_carowner.js?v=1.0.3,requires-body=true,timeout=15,enable={captureEnable},tag=平安好车主凭据抓取
-cron {cron} script-path=https://raw.githubusercontent.com/XXJJz/loon-pingan-carowner/main/pingan_carowner.js?v=1.0.3,timeout=180,argument=[{city},{autoFinish},{autoReward},{maxTasks},{replayFallback}],enable=true,tag=平安好车主签到与积分任务
+http-request ^https:\/\/hcz-member\.pingan\.com\.cn\/micro-api\/(?:activity-sign|activity-points-zone)\/gw\/(?:signCall|taskCall)\/(?:mainv1|toSign|taskMine|finish|reward|rewardBatch|refreshRecommend)(?:\?.*)?$ script-path=https://raw.githubusercontent.com/XXJJz/loon-pingan-carowner/main/pingan_carowner.js?v=1.0.4,requires-body=true,timeout=15,enable={captureEnable},tag=平安好车主凭据抓取
+cron {cron} script-path=https://raw.githubusercontent.com/XXJJz/loon-pingan-carowner/main/pingan_carowner.js?v=1.0.4,timeout=180,argument=[{city},{autoFinish},{autoReward},{maxTasks},{replayFallback}],enable=true,tag=平安好车主签到与积分任务
 
 [MITM]
 hostname = hcz-member.pingan.com.cn

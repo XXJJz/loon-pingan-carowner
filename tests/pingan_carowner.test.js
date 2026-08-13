@@ -161,10 +161,26 @@ function runSignatureDiagnosticTest() {
     },
     body
   });
+  const unmatchedProfile = JSON.stringify({
+    capturedAt: new Date().toISOString(),
+    url: "https://hcz-member.pingan.com.cn/micro-api/activity-points-zone/gw/taskCall/taskMine",
+    method: "POST",
+    headers: {
+      access_token: "credential-not-for-logs",
+      "x-pa-agent": "APP",
+      "x-pa-sign-v": "2",
+      "x-pa-sign-alg": "SHA256",
+      "x-pa-version": "6.03.1",
+      "x-pa-timestamp": timestamp,
+      "x-pa-sign": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+    },
+    body: JSON.stringify({ "x-PA-NONCESTR": "", city: "海口", spartaId: "private-device-value" })
+  });
   const auth = JSON.stringify({ accessToken: "credential-not-for-logs", headers: {} });
   const store = createStore({
     "pingan_carowner.auth": auth,
-    "pingan_carowner.profile.mainv1": profile
+    "pingan_carowner.profile.mainv1": profile,
+    "pingan_carowner.profile.taskMine": unmatchedProfile
   });
   const logs = [];
   let finished = false;
@@ -196,7 +212,10 @@ function runSignatureDiagnosticTest() {
   if (!logs.some((line) => line.includes("签名自检 mainv1：匹配 旧版顺序/x-pa-agent/完整路径/正文Base64/ios"))) {
     throw new Error("known SHA-256 signature formula was not detected");
   }
-  if (logs.some((line) => line.includes(agent) || line.includes(signature) || line.includes("00112233445566778899aabbccddeeff"))) {
+  if (!logs.some((line) => line.includes("签名自检 taskMine：未匹配（已测试"))) {
+    throw new Error("unmatched signature diagnostic missing");
+  }
+  if (logs.some((line) => line.includes(agent) || line.includes(signature) || line.includes("00112233445566778899aabbccddeeff") || line.includes("private-device-value"))) {
     throw new Error("signature diagnostic leaked sensitive values");
   }
 }

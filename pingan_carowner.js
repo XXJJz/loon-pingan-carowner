@@ -16,7 +16,7 @@
 (function () {
   "use strict";
 
-  var SCRIPT_VERSION = "1.0.3";
+  var SCRIPT_VERSION = "1.0.4";
   var STORE_PREFIX = "pingan_carowner.";
   var AUTO_HEADER = "X-Loon-Pingan-Auto";
   var SIGN_BASE = "https://hcz-member.pingan.com.cn/micro-api/activity-sign";
@@ -292,12 +292,23 @@
     ];
     var fixedValues = [
       { name: "x-pa-agent", value: headerValue(headers, "x-pa-agent") },
+      { name: "x-pa-sign-v", value: headerValue(headers, "x-pa-sign-v") },
+      { name: "x-pa-sign-alg", value: headerValue(headers, "x-pa-sign-alg") },
+      { name: "x-pa-version", value: headerValue(headers, "x-pa-version") },
+      { name: "versionno", value: headerValue(headers, "versionno") },
+      { name: "Android静态因子abdf", value: "abdf" },
+      { name: "Android旧静态因子asdf1", value: "asdf1" },
       { name: "旧版固定因子", value: "05419C0F13B8004C" },
+      { name: "Android包名", value: "com.pingan.carowner" },
+      { name: "iOS包名", value: "com.pingan.haochezhu" },
       { name: "x-pa-udid", value: headerValue(headers, "x-pa-udid") },
       { name: "x-pa-uuid", value: headerValue(headers, "x-pa-uuid") },
       { name: "空因子", value: "" }
     ];
-    var platforms = ["ios", "iOS", "IOS"];
+    var platforms = ["ios", "iOS", "IOS", "iphone", "h5"];
+    var signVersion = headerValue(headers, "x-pa-sign-v");
+    var signAlgorithm = headerValue(headers, "x-pa-sign-alg");
+    var appVersion = headerValue(headers, "versionno") || headerValue(headers, "x-pa-version");
     var seen = {};
     var tested = 0;
     var matched = "";
@@ -319,6 +330,22 @@
             testCandidate(core + "1", "旧版顺序加版本1/" + label);
             testCandidate(method + pathItem.value + payload.value + timestamp + platform + fixed.value, "末尾因子/" + label);
             testCandidate(method + pathItem.value + payload.value + timestamp + fixed.value + platform, "时间戳后因子/" + label);
+            testCandidate(method + pathItem.value + payload.value + fixed.value + timestamp + platform, "载荷后因子/" + label);
+            if (signVersion) {
+              testCandidate(core + signVersion, "旧版顺序加签名版本/" + label);
+              testCandidate(method + fixed.value + pathItem.value + payload.value + signVersion + timestamp + platform, "版本在时间戳前/" + label);
+            }
+            if (signAlgorithm) {
+              testCandidate(core + signAlgorithm, "旧版顺序加算法/" + label);
+              testCandidate(method + fixed.value + pathItem.value + payload.value + signAlgorithm + timestamp + platform, "算法在时间戳前/" + label);
+            }
+            if (appVersion) {
+              testCandidate(core + appVersion, "旧版顺序加应用版本/" + label);
+            }
+            if (signAlgorithm && signVersion) {
+              testCandidate(core + signAlgorithm + signVersion, "旧版顺序加算法版本/" + label);
+              testCandidate(core + signVersion + signAlgorithm, "旧版顺序加版本算法/" + label);
+            }
           });
         });
       });
