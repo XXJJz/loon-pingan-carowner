@@ -16,7 +16,7 @@
 (function () {
   "use strict";
 
-  var SCRIPT_VERSION = "1.0.1";
+  var SCRIPT_VERSION = "1.0.2";
   var STORE_PREFIX = "pingan_carowner.";
   var AUTO_HEADER = "X-Loon-Pingan-Auto";
   var SIGN_BASE = "https://hcz-member.pingan.com.cn/micro-api/activity-sign";
@@ -88,6 +88,37 @@
 
   function maskPresent(value) {
     return value ? "已获取" : "未发现";
+  }
+
+  function bodyFieldNames(body) {
+    if (!body) return "无";
+    try {
+      var parsed = JSON.parse(body);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return Object.keys(parsed).sort().join("|") || "空对象";
+      }
+    } catch (e) {}
+    var fields = [];
+    String(body).split("&").forEach(function (pair) {
+      var key = pair.split("=")[0];
+      if (key && fields.indexOf(key) === -1) fields.push(key);
+    });
+    return fields.length ? fields.sort().join("|") : "非结构化";
+  }
+
+  function profileDiagnostic(action) {
+    var profile = readJson("profile." + action, null);
+    if (!profile) {
+      debugLog("模板 " + action + "：未抓到");
+      return;
+    }
+    var captured = Date.parse(profile.capturedAt || "");
+    var age = isFinite(captured) ? Math.max(0, Math.round((Date.now() - captured) / 60000)) + " 分钟" : "未知";
+    debugLog(
+      "模板 " + action + "：距今 " + age +
+      "；请求头=" + (Object.keys(profile.headers || {}).sort().join("|") || "无") +
+      "；请求体字段=" + bodyFieldNames(profile.body)
+    );
   }
 
   function captureRequest() {
@@ -195,7 +226,7 @@
     return {
       ok: ok,
       code: typeof code === "undefined" ? status : code,
-      message: json.msg || json.message || json.error_msg || "",
+      message: json.msg || json.message || json.error_msg || json.errorMsg || json.errorMessage || json.responseMsg || json.retMsg || json.resultMsg || json.desc || "",
       data: typeof json.data === "undefined" ? json : json.data,
       raw: json
     };
@@ -342,6 +373,10 @@
       "，自动领奖=" + (args.autoReward ? "开" : "关") +
       "，任务上限=" + args.maxTasks
     );
+    debugLog("已保存认证请求头=" + (auth && auth.headers ? Object.keys(auth.headers).sort().join("|") : "无"));
+    profileDiagnostic("mainv1");
+    profileDiagnostic("toSign");
+    profileDiagnostic("taskMine");
 
     if (!auth || !(auth.accessToken || auth.secretToken)) {
       debugLog("停止：未找到凭据。请先在同一台 iPhone 上通过 Loon 打开平安好车主签到页和任务中心。");

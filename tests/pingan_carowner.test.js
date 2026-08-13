@@ -45,7 +45,12 @@ function runCaptureTest() {
 
 function runDailyTest() {
   const auth = JSON.stringify({ accessToken: "token", aopsId: "123", headers: { "User-Agent": "UA" } });
-  const store = createStore({ "pingan_carowner.auth": auth });
+  const mainProfile = JSON.stringify({
+    capturedAt: new Date().toISOString(),
+    headers: { access_token: "secret", "User-Agent": "UA" },
+    body: JSON.stringify({ m_content_data: "cipher", m_content_type: "1" })
+  });
+  const store = createStore({ "pingan_carowner.auth": auth, "pingan_carowner.profile.mainv1": mainProfile });
   const calls = [];
   const notifications = [];
   const logs = [];
@@ -100,6 +105,8 @@ function runDailyTest() {
   if (!notifications.some((entry) => entry[1] === "定时任务完成")) throw new Error("summary notification missing");
   if (!logs.some((line) => line.includes("定时任务开始"))) throw new Error("start diagnostic log missing");
   if (!logs.some((line) => line.includes("执行结果"))) throw new Error("result diagnostic log missing");
+  if (!logs.some((line) => line.includes("请求体字段=m_content_data|m_content_type"))) throw new Error("profile shape diagnostic missing");
+  if (logs.some((line) => line.includes("cipher") || line.includes("secret"))) throw new Error("diagnostic leaked credential values");
 }
 
 function runNullRequestCronTest() {
