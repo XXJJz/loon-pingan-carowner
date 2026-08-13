@@ -139,14 +139,14 @@ function runNullRequestCronTest() {
 }
 
 function runSignatureDiagnosticTest() {
-  const agent = "A1B2C3D4E5F60708";
+  const agent = "APP";
   const timestamp = "1667191396";
   const url = "https://hcz-member.pingan.com.cn/micro-api/activity-sign/gw/signCall/mainv1";
   const body = JSON.stringify({ "x-PA-NONCESTR": "00112233445566778899aabbccddeeff", city: "海口" });
   const pathname = "/micro-api/activity-sign/gw/signCall/mainv1";
   const bodyBase64 = Buffer.from(body, "utf8").toString("base64");
   const signature = crypto.createHash("sha256")
-    .update("POST" + agent + pathname + bodyBase64 + timestamp + "ios", "utf8")
+    .update("POST" + pathname + bodyBase64 + timestamp + "ios" + "05419C0F13B8004C" + "1" + "com.pingan.haochezhu", "utf8")
     .digest("hex")
     .toUpperCase();
   const profile = JSON.stringify({
@@ -156,6 +156,8 @@ function runSignatureDiagnosticTest() {
     headers: {
       access_token: "credential-not-for-logs",
       "x-pa-agent": agent,
+      "x-pa-sign-v": "v3",
+      "x-pa-sign-alg": "1",
       "x-pa-timestamp": timestamp,
       "x-pa-sign": signature
     },
@@ -183,6 +185,7 @@ function runSignatureDiagnosticTest() {
     "pingan_carowner.profile.taskMine": unmatchedProfile
   });
   const logs = [];
+  const calls = [];
   let finished = false;
   vm.runInNewContext(source, {
     $argument: { city: "海口", autoFinish: false, autoReward: false, maxTasks: "0", replayFallback: false },
@@ -190,6 +193,16 @@ function runSignatureDiagnosticTest() {
     $notification: { post() {} },
     $httpClient: {
       post(options, callback) {
+        calls.push(options);
+        if (/mainv1$/.test(options.url)) {
+          const requestTimestamp = options.headers["X-PA-TIMESTAMP"];
+          const expected = crypto.createHash("sha256")
+            .update("POST" + pathname + Buffer.from(options.body, "utf8").toString("base64") + requestTimestamp +
+              "ios" + "05419C0F13B8004C" + "1" + "com.pingan.haochezhu", "utf8")
+            .digest("hex")
+            .toUpperCase();
+          if (options.headers["X-PA-SIGN"] !== expected) throw new Error("dynamic request signature mismatch");
+        }
         const payload = /mainv1$/.test(options.url)
           ? { code: 0, data: { hadSign: 1 } }
           : { code: 0, data: {} };
@@ -209,8 +222,12 @@ function runSignatureDiagnosticTest() {
     parseInt
   });
   if (!finished) throw new Error("signature diagnostic script did not finish");
-  if (!logs.some((line) => line.includes("签名自检 mainv1：匹配 旧版顺序/x-pa-agent/完整路径/正文Base64/ios"))) {
+  if (!logs.some((line) => line.includes("签名自检 mainv1：匹配 iOS/native9/完整路径，已启用动态签名"))) {
     throw new Error("known SHA-256 signature formula was not detected");
+  }
+  if (!store.values.has("pingan_carowner.signing_config")) throw new Error("matched signing config was not saved");
+  if (!calls.some((call) => /mainv1$/.test(call.url) && call.headers["X-PA-SIGN"])) {
+    throw new Error("dynamic signed request was not sent");
   }
   if (!logs.some((line) => line.includes("签名自检 taskMine：未匹配（已测试"))) {
     throw new Error("unmatched signature diagnostic missing");

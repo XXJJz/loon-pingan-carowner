@@ -9,14 +9,14 @@
  * - /micro-api/activity-points-zone/gw/taskCall/reward
  * - /micro-api/activity-points-zone/gw/taskCall/rewardBatch
  *
- * App 会在原生层动态签名并加密请求。脚本优先尝试 secret_token 明文模式，
- * 失败时只对静态请求使用已抓取的原请求降级重放，不伪装成已验证成功。
+ * App 会在原生层动态签名。脚本只在候选模型与已抓取原签名完全一致后启用
+ * 动态签名；否则尝试 secret_token 明文模式及原请求降级重放，不伪装成功。
  */
 
 (function () {
   "use strict";
 
-  var SCRIPT_VERSION = "1.0.4";
+  var SCRIPT_VERSION = "1.0.5";
   var STORE_PREFIX = "pingan_carowner.";
   var AUTO_HEADER = "X-Loon-Pingan-Auto";
   var SIGN_BASE = "https://hcz-member.pingan.com.cn/micro-api/activity-sign";
@@ -64,6 +64,11 @@
     Object.keys(headers || {}).forEach(function (key) {
       if (key.toLowerCase() === wanted.toLowerCase()) delete headers[key];
     });
+  }
+
+  function setHeader(headers, name, value) {
+    removeHeader(headers, name);
+    if (value !== "" && value !== null && typeof value !== "undefined") headers[name] = String(value);
   }
 
   function cleanCapturedHeaders(headers) {
@@ -265,7 +270,77 @@
     }
   }
 
-  function signatureDiagnostic(action) {
+  function signingPreimage(config, method, url, body, timestamp) {
+    var parts = urlParts(url);
+    var path = parts.path;
+    if (config.trimMicroApi && path.indexOf("/micro-api/") === 0) path = path.slice(10);
+    var payload = method === "GET" ? "" : base64Encode(body || "");
+    if (config.strategy === "native9") {
+      return method + path + parts.query + payload + timestamp + config.platform +
+        config.selector + config.algorithm + config.packageName;
+    }
+    if (config.strategy === "selectorFirst9") {
+      return method + config.selector + path + parts.query + payload + timestamp +
+        config.platform + config.algorithm + config.packageName;
+    }
+    return method + config.selector + path + parts.query + payload + timestamp + config.platform;
+  }
+
+  function signingCandidates(profile) {
+    var headers = profile.headers || {};
+    var capturedAlg = headerValue(headers, "x-pa-sign-alg");
+    var algorithms = capturedAlg ? [capturedAlg] : ["1"];
+    if (algorithms.indexOf("1") === -1) algorithms.push("1");
+    var families = [
+      { platform: "ios", selector: "05419C0F13B8004C", packageName: "com.pingan.haochezhu", label: "iOS" },
+      { platform: "android", selector: "abdf", packageName: "com.pingan.carowner", label: "Android-6.03.1" },
+      { platform: "android", selector: "asdf1", packageName: "com.pingan.carowner", label: "Android-旧版" }
+    ];
+    var strategies = ["native9", "selectorFirst9", "legacyIos"];
+    var candidates = [];
+    families.forEach(function (family) {
+      algorithms.forEach(function (algorithm) {
+        strategies.forEach(function (strategy) {
+          [false, true].forEach(function (trimMicroApi) {
+            candidates.push({
+              strategy: strategy,
+              platform: family.platform,
+              selector: family.selector,
+              algorithm: algorithm,
+              packageName: family.packageName,
+              trimMicroApi: trimMicroApi,
+              label: family.label + "/" + strategy + (trimMicroApi ? "/去micro-api" : "/完整路径")
+            });
+          });
+        });
+      });
+    });
+    return candidates;
+  }
+
+  function detectSigningConfig(profile) {
+    if (!profile) return { config: null, tested: 0 };
+    var headers = profile.headers || {};
+    var actual = headerValue(headers, "x-pa-sign").replace(/\s/g, "").toUpperCase();
+    var timestamp = headerValue(headers, "x-pa-timestamp");
+    if (!actual || !timestamp) return { config: null, tested: 0 };
+    var method = String(profile.method || "POST").toUpperCase();
+    var candidates = signingCandidates(profile);
+    var tested = 0;
+    var match = null;
+    candidates.some(function (candidate) {
+      tested += 1;
+      var preimage = signingPreimage(candidate, method, profile.url, profile.body || "", timestamp);
+      if (sha256(preimage) === actual) {
+        match = candidate;
+        return true;
+      }
+      return false;
+    });
+    return { config: match, tested: tested };
+  }
+
+  function signatureDiagnostic(action, invalidateOnMiss) {
     var profile = readJson("profile." + action, null);
     if (!profile) return;
     var headers = profile.headers || {};
@@ -276,88 +351,19 @@
       return;
     }
 
-    var method = String(profile.method || "POST").toUpperCase();
-    var parts = urlParts(profile.url);
-    var paths = [{ name: "完整路径", value: parts.path }];
-    if (parts.path.indexOf("/micro-api/") === 0) {
-      paths.push({ name: "去micro-api路径", value: parts.path.slice(10) });
-    }
-    var body = String(profile.body || "");
-    var payloads = [
-      { name: "正文Base64", value: base64Encode(body) },
-      { name: "原始正文", value: body },
-      { name: "查询串", value: parts.query },
-      { name: "查询串加正文Base64", value: parts.query + base64Encode(body) },
-      { name: "空载荷", value: "" }
-    ];
-    var fixedValues = [
-      { name: "x-pa-agent", value: headerValue(headers, "x-pa-agent") },
-      { name: "x-pa-sign-v", value: headerValue(headers, "x-pa-sign-v") },
-      { name: "x-pa-sign-alg", value: headerValue(headers, "x-pa-sign-alg") },
-      { name: "x-pa-version", value: headerValue(headers, "x-pa-version") },
-      { name: "versionno", value: headerValue(headers, "versionno") },
-      { name: "Android静态因子abdf", value: "abdf" },
-      { name: "Android旧静态因子asdf1", value: "asdf1" },
-      { name: "旧版固定因子", value: "05419C0F13B8004C" },
-      { name: "Android包名", value: "com.pingan.carowner" },
-      { name: "iOS包名", value: "com.pingan.haochezhu" },
-      { name: "x-pa-udid", value: headerValue(headers, "x-pa-udid") },
-      { name: "x-pa-uuid", value: headerValue(headers, "x-pa-uuid") },
-      { name: "空因子", value: "" }
-    ];
-    var platforms = ["ios", "iOS", "IOS", "iphone", "h5"];
-    var signVersion = headerValue(headers, "x-pa-sign-v");
-    var signAlgorithm = headerValue(headers, "x-pa-sign-alg");
-    var appVersion = headerValue(headers, "versionno") || headerValue(headers, "x-pa-version");
-    var seen = {};
-    var tested = 0;
-    var matched = "";
-
-    function testCandidate(preimage, label) {
-      if (matched || seen[preimage]) return;
-      seen[preimage] = true;
-      tested += 1;
-      if (sha256(preimage) === actual) matched = label;
-    }
-
-    paths.forEach(function (pathItem) {
-      payloads.forEach(function (payload) {
-        fixedValues.forEach(function (fixed) {
-          platforms.forEach(function (platform) {
-            var core = method + fixed.value + pathItem.value + payload.value + timestamp + platform;
-            var label = fixed.name + "/" + pathItem.name + "/" + payload.name + "/" + platform;
-            testCandidate(core, "旧版顺序/" + label);
-            testCandidate(core + "1", "旧版顺序加版本1/" + label);
-            testCandidate(method + pathItem.value + payload.value + timestamp + platform + fixed.value, "末尾因子/" + label);
-            testCandidate(method + pathItem.value + payload.value + timestamp + fixed.value + platform, "时间戳后因子/" + label);
-            testCandidate(method + pathItem.value + payload.value + fixed.value + timestamp + platform, "载荷后因子/" + label);
-            if (signVersion) {
-              testCandidate(core + signVersion, "旧版顺序加签名版本/" + label);
-              testCandidate(method + fixed.value + pathItem.value + payload.value + signVersion + timestamp + platform, "版本在时间戳前/" + label);
-            }
-            if (signAlgorithm) {
-              testCandidate(core + signAlgorithm, "旧版顺序加算法/" + label);
-              testCandidate(method + fixed.value + pathItem.value + payload.value + signAlgorithm + timestamp + platform, "算法在时间戳前/" + label);
-            }
-            if (appVersion) {
-              testCandidate(core + appVersion, "旧版顺序加应用版本/" + label);
-            }
-            if (signAlgorithm && signVersion) {
-              testCandidate(core + signAlgorithm + signVersion, "旧版顺序加算法版本/" + label);
-              testCandidate(core + signVersion + signAlgorithm, "旧版顺序加版本算法/" + label);
-            }
-          });
-        });
-      });
-    });
-
-    if (matched) {
-      debugLog("签名自检 " + action + "：匹配 " + matched);
+    var detection = detectSigningConfig(profile);
+    if (detection.config) {
+      writeJson("signing_config", detection.config);
+      debugLog("签名自检 " + action + "：匹配 " + detection.config.label + "，已启用动态签名");
     } else {
+      if (invalidateOnMiss) writeJson("signing_config", null);
       debugLog(
-        "签名自检 " + action + "：未匹配（已测试 " + tested + " 种；签名=" + valueShape(actual) +
+        "签名自检 " + action + "：未匹配（已测试 " + detection.tested + " 个静态证据模型；签名=" + valueShape(actual) +
         "，时间戳=" + valueShape(timestamp) + "，agent=" + valueShape(headerValue(headers, "x-pa-agent")) +
-        "，nonce=" + nonceShape(body) + "）"
+        "，sign-v=" + (headerValue(headers, "x-pa-sign-v") || "无") +
+        "，sign-alg=" + (headerValue(headers, "x-pa-sign-alg") || "无") +
+        "，origin=" + (headerValue(headers, "x-pa-origin") || "无") +
+        "，nonce=" + nonceShape(profile.body || "") + "）"
       );
     }
   }
@@ -411,6 +417,7 @@
       lastAction: action
     };
     writeJson("auth", auth);
+    signatureDiagnostic(action, true);
     debugLog(
       "凭据状态：Token " + maskPresent(auth.accessToken || auth.secretToken) +
       "，AopsID " + maskPresent(auth.aopsId) +
@@ -517,6 +524,57 @@
     }, callback);
   }
 
+  function buildSignedRequest(auth, action, url, data) {
+    var config = readJson("signing_config", null);
+    if (!config) return null;
+    var profile = readJson("profile." + action, null);
+    var source = (profile && profile.headers) || auth.headers || {};
+    var headers = cleanCapturedHeaders(source);
+    var body = JSON.stringify(data || {});
+    var method = "POST";
+    var timestamp = String(Math.floor(Date.now() / 1000));
+
+    setHeader(headers, AUTO_HEADER, "1");
+    setHeader(headers, "Content-Type", headerValue(headers, "Content-Type") || "application/json");
+    setHeader(headers, "X-PA-TIMESTAMP", timestamp);
+    setHeader(headers, "X-PA-SIGN-ALG", config.algorithm);
+    setHeader(headers, "X-PA-SIGN", sha256(signingPreimage(config, method, url, body, timestamp)));
+    if (auth.accessToken) setHeader(headers, "access_token", auth.accessToken);
+    if (auth.secretToken) setHeader(headers, "secret_token", auth.secretToken);
+    if (auth.aopsId) setHeader(headers, "aopsID", auth.aopsId);
+    if (auth.spartaId) setHeader(headers, "spartaId", auth.spartaId);
+    return { headers: headers, body: body };
+  }
+
+  function postSigned(auth, action, url, data, callback) {
+    var signed = buildSignedRequest(auth, action, url, data);
+    if (!signed) {
+      callback({ ok: false, code: -3, message: "尚未通过原请求签名自检" });
+      return;
+    }
+    postRaw({
+      url: url,
+      timeout: 15000,
+      headers: signed.headers,
+      body: signed.body,
+      "auto-cookie": false,
+      alpn: "h2"
+    }, callback);
+  }
+
+  function postBest(auth, action, url, data, callback) {
+    if (readJson("signing_config", null)) {
+      postSigned(auth, action, url, data, function (result) {
+        debugLog(action + " 使用动态签名：" + (result.ok ? "成功" : "失败"));
+        callback(result, "动态签名");
+      });
+      return;
+    }
+    postPlain(auth, url, data, function (result) {
+      callback(result, "Token");
+    });
+  }
+
   function replayProfile(action, callback) {
     var profile = readJson("profile." + action, null);
     if (!profile || !profile.url || !profile.body) {
@@ -536,13 +594,13 @@
   }
 
   function staticPost(auth, args, action, url, data, callback) {
-    postPlain(auth, url, data, function (result) {
+    postBest(auth, action, url, data, function (result, firstMode) {
       if (result.ok || !args.replayFallback) {
-        debugLog(action + " 使用 Token 模式：" + (result.ok ? "成功" : "失败"));
-        callback(result, "token");
+        debugLog(action + " 使用 " + firstMode + " 模式：" + (result.ok ? "成功" : "失败"));
+        callback(result, firstMode);
         return;
       }
-      debugLog(action + " 的 Token 模式失败，尝试原请求重放");
+      debugLog(action + " 的 " + firstMode + " 模式失败，尝试原请求重放");
       replayProfile(action, function (fallbackResult) {
         debugLog(action + " 使用重放模式：" + (fallbackResult.ok ? "成功" : "失败"));
         callback(fallbackResult, "replay");
@@ -672,7 +730,7 @@
       });
       runSeries(ready, function (task, next) {
         rewardAttempted[String(taskId(task))] = true;
-        postPlain(auth, TASK_BASE + "/gw/taskCall/reward", { task_id: taskId(task) }, function (result) {
+        postBest(auth, "reward", TASK_BASE + "/gw/taskCall/reward", { task_id: taskId(task) }, function (result) {
           if (result.ok) counters.rewarded += 1;
           else counters.rewardFailed += 1;
           next();
@@ -689,7 +747,7 @@
         return taskStatus(task) === 2 && isSafeBrowseTask(task);
       }).slice(0, args.maxTasks);
       runSeries(pending, function (task, next) {
-        postPlain(auth, TASK_BASE + "/gw/taskCall/finish", { task_id: taskId(task) }, function (result) {
+        postBest(auth, "finish", TASK_BASE + "/gw/taskCall/finish", { task_id: taskId(task) }, function (result) {
           if (result.ok) counters.finished += 1;
           else counters.finishFailed += 1;
           next();
