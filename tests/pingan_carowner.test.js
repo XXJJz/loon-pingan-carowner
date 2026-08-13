@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const crypto = require("crypto");
 
 const source = fs.readFileSync(path.join(__dirname, "..", "pingan_carowner.js"), "utf8");
 
@@ -137,7 +138,71 @@ function runNullRequestCronTest() {
   if (!logs.some((line) => line.includes("未找到凭据"))) throw new Error("missing credential diagnostic log missing");
 }
 
+function runSignatureDiagnosticTest() {
+  const agent = "A1B2C3D4E5F60708";
+  const timestamp = "1667191396";
+  const url = "https://hcz-member.pingan.com.cn/micro-api/activity-sign/gw/signCall/mainv1";
+  const body = JSON.stringify({ "x-PA-NONCESTR": "00112233445566778899aabbccddeeff", city: "海口" });
+  const pathname = "/micro-api/activity-sign/gw/signCall/mainv1";
+  const bodyBase64 = Buffer.from(body, "utf8").toString("base64");
+  const signature = crypto.createHash("sha256")
+    .update("POST" + agent + pathname + bodyBase64 + timestamp + "ios", "utf8")
+    .digest("hex")
+    .toUpperCase();
+  const profile = JSON.stringify({
+    capturedAt: new Date().toISOString(),
+    url,
+    method: "POST",
+    headers: {
+      access_token: "credential-not-for-logs",
+      "x-pa-agent": agent,
+      "x-pa-timestamp": timestamp,
+      "x-pa-sign": signature
+    },
+    body
+  });
+  const auth = JSON.stringify({ accessToken: "credential-not-for-logs", headers: {} });
+  const store = createStore({
+    "pingan_carowner.auth": auth,
+    "pingan_carowner.profile.mainv1": profile
+  });
+  const logs = [];
+  let finished = false;
+  vm.runInNewContext(source, {
+    $argument: { city: "海口", autoFinish: false, autoReward: false, maxTasks: "0", replayFallback: false },
+    $persistentStore: store.api,
+    $notification: { post() {} },
+    $httpClient: {
+      post(options, callback) {
+        const payload = /mainv1$/.test(options.url)
+          ? { code: 0, data: { hadSign: 1 } }
+          : { code: 0, data: {} };
+        callback(null, { status: 200 }, JSON.stringify(payload));
+      }
+    },
+    $done() { finished = true; },
+    console: { log(message) { logs.push(String(message)); } },
+    Date,
+    JSON,
+    Object,
+    String,
+    Number,
+    Array,
+    RegExp,
+    isFinite,
+    parseInt
+  });
+  if (!finished) throw new Error("signature diagnostic script did not finish");
+  if (!logs.some((line) => line.includes("签名自检 mainv1：匹配 旧版顺序/x-pa-agent/完整路径/正文Base64/ios"))) {
+    throw new Error("known SHA-256 signature formula was not detected");
+  }
+  if (logs.some((line) => line.includes(agent) || line.includes(signature) || line.includes("00112233445566778899aabbccddeeff"))) {
+    throw new Error("signature diagnostic leaked sensitive values");
+  }
+}
+
 runCaptureTest();
 runDailyTest();
 runNullRequestCronTest();
+runSignatureDiagnosticTest();
 console.log("pingan_carowner tests passed");

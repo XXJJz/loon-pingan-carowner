@@ -16,7 +16,7 @@
 (function () {
   "use strict";
 
-  var SCRIPT_VERSION = "1.0.2";
+  var SCRIPT_VERSION = "1.0.3";
   var STORE_PREFIX = "pingan_carowner.";
   var AUTO_HEADER = "X-Loon-Pingan-Auto";
   var SIGN_BASE = "https://hcz-member.pingan.com.cn/micro-api/activity-sign";
@@ -104,6 +104,235 @@
       if (key && fields.indexOf(key) === -1) fields.push(key);
     });
     return fields.length ? fields.sort().join("|") : "非结构化";
+  }
+
+  function utf8Bytes(value) {
+    var text = String(value || "");
+    var bytes = [];
+    var i;
+    for (i = 0; i < text.length; i += 1) {
+      var code = text.charCodeAt(i);
+      if (code < 0x80) {
+        bytes.push(code);
+      } else if (code < 0x800) {
+        bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
+      } else if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
+        var low = text.charCodeAt(i + 1);
+        if (low >= 0xdc00 && low <= 0xdfff) {
+          var point = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+          bytes.push(
+            0xf0 | (point >> 18),
+            0x80 | ((point >> 12) & 0x3f),
+            0x80 | ((point >> 6) & 0x3f),
+            0x80 | (point & 0x3f)
+          );
+          i += 1;
+        } else {
+          bytes.push(0xef, 0xbf, 0xbd);
+        }
+      } else if (code >= 0xdc00 && code <= 0xdfff) {
+        bytes.push(0xef, 0xbf, 0xbd);
+      } else {
+        bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+      }
+    }
+    return bytes;
+  }
+
+  function base64Encode(value) {
+    var bytes = utf8Bytes(value);
+    var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    var out = "";
+    var i;
+    for (i = 0; i < bytes.length; i += 3) {
+      var a = bytes[i];
+      var b = i + 1 < bytes.length ? bytes[i + 1] : 0;
+      var c = i + 2 < bytes.length ? bytes[i + 2] : 0;
+      out += alphabet.charAt(a >> 2);
+      out += alphabet.charAt(((a & 3) << 4) | (b >> 4));
+      out += i + 1 < bytes.length ? alphabet.charAt(((b & 15) << 2) | (c >> 6)) : "=";
+      out += i + 2 < bytes.length ? alphabet.charAt(c & 63) : "=";
+    }
+    return out;
+  }
+
+  function rightRotate(value, amount) {
+    return (value >>> amount) | (value << (32 - amount));
+  }
+
+  function sha256(value) {
+    var constants = [
+      0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+      0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+      0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+      0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+      0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+      0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+      0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+      0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+    ];
+    var hash = [
+      0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+      0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+    ];
+    var bytes = utf8Bytes(value);
+    var bitLengthHigh = Math.floor((bytes.length * 8) / 0x100000000);
+    var bitLengthLow = (bytes.length * 8) >>> 0;
+    bytes.push(0x80);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    bytes.push(
+      (bitLengthHigh >>> 24) & 255, (bitLengthHigh >>> 16) & 255,
+      (bitLengthHigh >>> 8) & 255, bitLengthHigh & 255,
+      (bitLengthLow >>> 24) & 255, (bitLengthLow >>> 16) & 255,
+      (bitLengthLow >>> 8) & 255, bitLengthLow & 255
+    );
+
+    var offset;
+    for (offset = 0; offset < bytes.length; offset += 64) {
+      var words = [];
+      var i;
+      for (i = 0; i < 16; i += 1) {
+        var p = offset + i * 4;
+        words[i] = ((bytes[p] << 24) | (bytes[p + 1] << 16) | (bytes[p + 2] << 8) | bytes[p + 3]) | 0;
+      }
+      for (i = 16; i < 64; i += 1) {
+        var w15 = words[i - 15];
+        var w2 = words[i - 2];
+        var s0 = rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3);
+        var s1 = rightRotate(w2, 17) ^ rightRotate(w2, 19) ^ (w2 >>> 10);
+        words[i] = (words[i - 16] + s0 + words[i - 7] + s1) | 0;
+      }
+
+      var a = hash[0];
+      var b = hash[1];
+      var c = hash[2];
+      var d = hash[3];
+      var e = hash[4];
+      var f = hash[5];
+      var g = hash[6];
+      var h = hash[7];
+      for (i = 0; i < 64; i += 1) {
+        var bigS1 = rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25);
+        var choose = (e & f) ^ ((~e) & g);
+        var temp1 = (h + bigS1 + choose + constants[i] + words[i]) | 0;
+        var bigS0 = rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22);
+        var majority = (a & b) ^ (a & c) ^ (b & c);
+        var temp2 = (bigS0 + majority) | 0;
+        h = g;
+        g = f;
+        f = e;
+        e = (d + temp1) | 0;
+        d = c;
+        c = b;
+        b = a;
+        a = (temp1 + temp2) | 0;
+      }
+      hash[0] = (hash[0] + a) | 0;
+      hash[1] = (hash[1] + b) | 0;
+      hash[2] = (hash[2] + c) | 0;
+      hash[3] = (hash[3] + d) | 0;
+      hash[4] = (hash[4] + e) | 0;
+      hash[5] = (hash[5] + f) | 0;
+      hash[6] = (hash[6] + g) | 0;
+      hash[7] = (hash[7] + h) | 0;
+    }
+    return hash.map(function (word) {
+      return ("00000000" + (word >>> 0).toString(16)).slice(-8);
+    }).join("").toUpperCase();
+  }
+
+  function urlParts(url) {
+    var match = String(url || "").match(/^(?:https?:\/\/[^/]+)?([^?#]*)(?:\?([^#]*))?/i);
+    return { path: match && match[1] ? match[1] : "", query: match && match[2] ? match[2] : "" };
+  }
+
+  function valueShape(value) {
+    var text = String(value || "");
+    if (!text) return "无";
+    if (/^[0-9]+$/.test(text)) return text.length + "位数字";
+    if (/^[0-9a-f]+$/i.test(text)) return text.length + "位十六进制";
+    if (/^[0-9a-f-]+$/i.test(text)) return text.length + "位UUID样式";
+    return text.length + "字符";
+  }
+
+  function nonceShape(body) {
+    try {
+      var parsed = JSON.parse(body || "{}");
+      var nonce = parsed["x-PA-NONCESTR"] || parsed["x-pa-noncestr"] || parsed.nonce || "";
+      return valueShape(nonce);
+    } catch (e) {
+      return "无法解析";
+    }
+  }
+
+  function signatureDiagnostic(action) {
+    var profile = readJson("profile." + action, null);
+    if (!profile) return;
+    var headers = profile.headers || {};
+    var actual = headerValue(headers, "x-pa-sign").replace(/\s/g, "").toUpperCase();
+    var timestamp = headerValue(headers, "x-pa-timestamp");
+    if (!actual || !timestamp) {
+      debugLog("签名自检 " + action + "：跳过（缺少签名或时间戳）");
+      return;
+    }
+
+    var method = String(profile.method || "POST").toUpperCase();
+    var parts = urlParts(profile.url);
+    var paths = [{ name: "完整路径", value: parts.path }];
+    if (parts.path.indexOf("/micro-api/") === 0) {
+      paths.push({ name: "去micro-api路径", value: parts.path.slice(10) });
+    }
+    var body = String(profile.body || "");
+    var payloads = [
+      { name: "正文Base64", value: base64Encode(body) },
+      { name: "原始正文", value: body },
+      { name: "查询串", value: parts.query },
+      { name: "查询串加正文Base64", value: parts.query + base64Encode(body) },
+      { name: "空载荷", value: "" }
+    ];
+    var fixedValues = [
+      { name: "x-pa-agent", value: headerValue(headers, "x-pa-agent") },
+      { name: "旧版固定因子", value: "05419C0F13B8004C" },
+      { name: "x-pa-udid", value: headerValue(headers, "x-pa-udid") },
+      { name: "x-pa-uuid", value: headerValue(headers, "x-pa-uuid") },
+      { name: "空因子", value: "" }
+    ];
+    var platforms = ["ios", "iOS", "IOS"];
+    var seen = {};
+    var tested = 0;
+    var matched = "";
+
+    function testCandidate(preimage, label) {
+      if (matched || seen[preimage]) return;
+      seen[preimage] = true;
+      tested += 1;
+      if (sha256(preimage) === actual) matched = label;
+    }
+
+    paths.forEach(function (pathItem) {
+      payloads.forEach(function (payload) {
+        fixedValues.forEach(function (fixed) {
+          platforms.forEach(function (platform) {
+            var core = method + fixed.value + pathItem.value + payload.value + timestamp + platform;
+            var label = fixed.name + "/" + pathItem.name + "/" + payload.name + "/" + platform;
+            testCandidate(core, "旧版顺序/" + label);
+            testCandidate(core + "1", "旧版顺序加版本1/" + label);
+            testCandidate(method + pathItem.value + payload.value + timestamp + platform + fixed.value, "末尾因子/" + label);
+            testCandidate(method + pathItem.value + payload.value + timestamp + fixed.value + platform, "时间戳后因子/" + label);
+          });
+        });
+      });
+    });
+
+    if (matched) {
+      debugLog("签名自检 " + action + "：匹配 " + matched);
+    } else {
+      debugLog(
+        "签名自检 " + action + "：未匹配（已测试 " + tested + " 种；签名=" + valueShape(actual) +
+        "，时间戳=" + valueShape(timestamp) + "，agent=" + valueShape(headerValue(headers, "x-pa-agent")) +
+        "，nonce=" + nonceShape(body) + "）"
+      );
+    }
   }
 
   function profileDiagnostic(action) {
@@ -377,6 +606,9 @@
     profileDiagnostic("mainv1");
     profileDiagnostic("toSign");
     profileDiagnostic("taskMine");
+    signatureDiagnostic("mainv1");
+    signatureDiagnostic("toSign");
+    signatureDiagnostic("taskMine");
 
     if (!auth || !(auth.accessToken || auth.secretToken)) {
       debugLog("停止：未找到凭据。请先在同一台 iPhone 上通过 Loon 打开平安好车主签到页和任务中心。");
