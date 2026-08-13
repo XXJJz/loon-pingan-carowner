@@ -46,6 +46,19 @@ https://raw.githubusercontent.com/XXJJz/loon-pingan-carowner/main/PingAnCarOwner
 
 首次部署后建议把 cron 临时设为未来 2–3 分钟，进行一次真实验收。只有通知中明确出现“签到成功/今天已签到”和任务列表数量，才算通过。
 
+## 查看运行结果
+
+Loon 的脚本详情页只显示脚本通过 `console.log` 输出的内容，本地通知不会自动出现在该日志里。当前版本会在日志中显示：
+
+- 是否进入定时任务模式；
+- 是否已抓到凭据；
+- 每个接口使用 Token 模式还是原请求重放；
+- HTTP 状态、业务码和最终汇总。
+
+日志不会打印 Cookie、Token 或完整响应。如果日志提示“未找到凭据”，必须在安装 Loon 的同一台 iPhone 上打开平安好车主签到页和任务中心；电脑连接的 Pixel 只用于分析接口，不能把 Pixel 的登录凭据自动传给 iPhone Loon。
+
+更新插件后，日志第一行应包含当前脚本版本。若仍显示旧版日志，请在 Loon 中手动更新插件订阅后再运行。
+
 ## 隐私
 
 Cookie、Token 和请求模板只写入 Loon 的 `$persistentStore`，脚本不会上传到第三方。不要把 Loon 脚本存储、调试日志或抓包记录公开分享。

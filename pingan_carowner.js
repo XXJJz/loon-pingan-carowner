@@ -16,10 +16,15 @@
 (function () {
   "use strict";
 
+  var SCRIPT_VERSION = "1.0.1";
   var STORE_PREFIX = "pingan_carowner.";
   var AUTO_HEADER = "X-Loon-Pingan-Auto";
   var SIGN_BASE = "https://hcz-member.pingan.com.cn/micro-api/activity-sign";
   var TASK_BASE = "https://hcz-member.pingan.com.cn/micro-api/activity-points-zone";
+
+  function debugLog(message) {
+    console.log("[平安好车主] " + message);
+  }
 
   function readJson(key, fallback) {
     var raw = $persistentStore.read(STORE_PREFIX + key);
@@ -93,6 +98,7 @@
     }
 
     var action = actionFromUrl($request.url);
+    debugLog("捕获请求：" + action);
     var profile = {
       action: action,
       url: $request.url,
@@ -118,6 +124,11 @@
       lastAction: action
     };
     writeJson("auth", auth);
+    debugLog(
+      "凭据状态：Token " + maskPresent(auth.accessToken || auth.secretToken) +
+      "，AopsID " + maskPresent(auth.aopsId) +
+      "，模板 " + (profile.body ? "已保存" : "无请求体")
+    );
 
     var notified = readJson("capture_notified", {});
     if (!notified[action]) {
@@ -193,10 +204,18 @@
   function postRaw(options, callback) {
     $httpClient.post(options, function (error, response, body) {
       if (error) {
+        debugLog("请求 " + actionFromUrl(options.url) + " 失败：" + String(error));
         callback({ ok: false, code: -1, message: String(error) });
         return;
       }
-      callback(parseResponse(body, response && response.status));
+      var result = parseResponse(body, response && response.status);
+      debugLog(
+        "请求 " + actionFromUrl(options.url) +
+        "：HTTP " + ((response && response.status) || "未知") +
+        "，业务码 " + result.code +
+        "，" + (result.ok ? "成功" : "失败")
+      );
+      callback(result);
     });
   }
 
@@ -232,10 +251,13 @@
   function staticPost(auth, args, action, url, data, callback) {
     postPlain(auth, url, data, function (result) {
       if (result.ok || !args.replayFallback) {
+        debugLog(action + " 使用 Token 模式：" + (result.ok ? "成功" : "失败"));
         callback(result, "token");
         return;
       }
+      debugLog(action + " 的 Token 模式失败，尝试原请求重放");
       replayProfile(action, function (fallbackResult) {
+        debugLog(action + " 使用重放模式：" + (fallbackResult.ok ? "成功" : "失败"));
         callback(fallbackResult, "replay");
       });
     });
@@ -314,7 +336,15 @@
     var counters = { finished: 0, finishFailed: 0, rewarded: 0, rewardFailed: 0 };
     var rewardAttempted = {};
 
+    debugLog(
+      "v" + SCRIPT_VERSION + " 定时任务开始：城市=" + args.city +
+      "，浏览任务=" + (args.autoFinish ? "开" : "关") +
+      "，自动领奖=" + (args.autoReward ? "开" : "关") +
+      "，任务上限=" + args.maxTasks
+    );
+
     if (!auth || !(auth.accessToken || auth.secretToken)) {
+      debugLog("停止：未找到凭据。请先在同一台 iPhone 上通过 Loon 打开平安好车主签到页和任务中心。");
       $notification.post("平安好车主", "缺少凭据", "请先开启 Loon MITM，再在平安好车主 App 进入签到页和任务中心。");
       $done();
       return;
@@ -322,6 +352,7 @@
 
     function finish(summary) {
       log.push(summary);
+      console.log("[平安好车主] 执行结果：\n" + log.join("\n"));
       $notification.post("平安好车主", "定时任务完成", log.join("\n"));
       $done();
     }
@@ -426,6 +457,18 @@
     }
   }
 
-  if (typeof $request !== "undefined") captureRequest();
-  else runDaily();
+  function isRequestContext() {
+    return typeof $request !== "undefined" && $request && typeof $request.url === "string" && $request.url.length > 0;
+  }
+
+  try {
+    if (isRequestContext()) captureRequest();
+    else runDaily();
+  } catch (error) {
+    var message = error && error.stack ? error.stack : String(error);
+    debugLog("脚本异常：" + message);
+    $notification.post("平安好车主", "脚本异常", String(error));
+    if (isRequestContext()) $done({});
+    else $done();
+  }
 })();

@@ -48,6 +48,7 @@ function runDailyTest() {
   const store = createStore({ "pingan_carowner.auth": auth });
   const calls = [];
   const notifications = [];
+  const logs = [];
   let finished = false;
   const taskPayload = {
     code: 0,
@@ -79,7 +80,7 @@ function runDailyTest() {
       }
     },
     $done() { finished = true; },
-    console,
+    console: { log(message) { logs.push(String(message)); } },
     Date,
     JSON,
     Object,
@@ -97,8 +98,39 @@ function runDailyTest() {
   if (finishBodies.some((body) => body.includes("blocked"))) throw new Error("blocked task was attempted");
   if (!calls.some((call) => /\/reward$/.test(call.url))) throw new Error("reward request missing");
   if (!notifications.some((entry) => entry[1] === "定时任务完成")) throw new Error("summary notification missing");
+  if (!logs.some((line) => line.includes("定时任务开始"))) throw new Error("start diagnostic log missing");
+  if (!logs.some((line) => line.includes("执行结果"))) throw new Error("result diagnostic log missing");
+}
+
+function runNullRequestCronTest() {
+  const store = createStore();
+  const notifications = [];
+  const logs = [];
+  let finished = false;
+  vm.runInNewContext(source, {
+    $request: null,
+    $argument: { city: "北京" },
+    $persistentStore: store.api,
+    $notification: { post() { notifications.push(Array.from(arguments)); } },
+    $httpClient: { post() { throw new Error("missing credentials should stop before HTTP"); } },
+    $done() { finished = true; },
+    console: { log(message) { logs.push(String(message)); } },
+    Date,
+    JSON,
+    Object,
+    String,
+    Number,
+    Array,
+    RegExp,
+    isFinite,
+    parseInt
+  });
+  if (!finished) throw new Error("null-request cron did not finish");
+  if (!notifications.some((entry) => entry[1] === "缺少凭据")) throw new Error("missing credential notification missing");
+  if (!logs.some((line) => line.includes("未找到凭据"))) throw new Error("missing credential diagnostic log missing");
 }
 
 runCaptureTest();
 runDailyTest();
+runNullRequestCronTest();
 console.log("pingan_carowner tests passed");
