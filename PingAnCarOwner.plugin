@@ -1,0 +1,23 @@
+#!name = 平安好车主签到与积分任务
+#!desc = 抓取平安好车主登录凭据，并按设定时间签到、领取已完成任务奖励；可选尝试完成低风险浏览类任务。首次使用必须在平安好车主 App 内手动进入签到页和任务中心。
+#!author = Codex
+#!date = 2026-08-14
+#!system = iOS
+#!loon_version = 3.2.1(733)
+#!tag = 签到,积分,平安好车主
+
+[Argument]
+cron = input,"10 9 * * *",tag=执行时间,desc=五段 cron 表达式，默认每天 09:10
+city = input,"北京",tag=任务城市,desc=任务中心接口要求城市；请改成你常用的城市
+autoFinish = switch,true,tag=尝试浏览任务,desc=仅尝试标题为浏览、查看、阅读、访问、逛一逛等低风险任务；不会执行购买、投保、支付、邀请、绑定、上传、评论或分享任务
+autoReward = switch,true,tag=自动领奖励,desc=领取状态为待领取的任务积分
+maxTasks = input,"5",tag=单次任务上限,desc=每次最多尝试完成的浏览类任务数，建议不超过 5
+replayFallback = switch,true,tag=原请求降级重放,desc=明文 Token 请求失败时，仅对签到首页、签到和任务列表尝试重放 App 原请求；动态签名过期时仍会失败
+captureEnable = switch,true,tag=启用凭据抓取,desc=关闭后不会更新 Cookie、Token 和原请求模板
+
+[Script]
+http-request ^https:\/\/hcz-member\.pingan\.com\.cn\/micro-api\/(?:activity-sign|activity-points-zone)\/gw\/(?:signCall|taskCall)\/(?:mainv1|toSign|taskMine|finish|reward|rewardBatch|refreshRecommend)(?:\?.*)?$ script-path=https://raw.githubusercontent.com/XXJJz/loon-pingan-carowner/main/pingan_carowner.js,requires-body=true,timeout=15,enable={captureEnable},tag=平安好车主凭据抓取
+cron {cron} script-path=https://raw.githubusercontent.com/XXJJz/loon-pingan-carowner/main/pingan_carowner.js,timeout=180,argument=[{city},{autoFinish},{autoReward},{maxTasks},{replayFallback}],enable=true,tag=平安好车主签到与积分任务
+
+[MITM]
+hostname = hcz-member.pingan.com.cn
